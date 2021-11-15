@@ -1390,8 +1390,11 @@ bool X86MachineInstructionRaiser::raiseBinaryOpRegToRegMachineInstr(
     raisedValues->setPhysRegSSAValue(dstReg, MBBNo, dstValue);
   } break;
   case X86::PANDrr:
+  case X86::PANDNrr:
   case X86::ANDPDrr:
   case X86::ANDPSrr:
+  case X86::ANDNPDrr:
+  case X86::ANDNPSrr:
   case X86::PORrr:
   case X86::ORPDrr:
   case X86::ORPSrr:
@@ -1451,6 +1454,13 @@ bool X86MachineInstructionRaiser::raiseBinaryOpRegToRegMachineInstr(
         Result = BinaryOperator::CreateAnd(BitCastToInt1, BitCastToInt2,
                                            "and_result", RaisedBB);
         break;
+      case X86::PANDNrr:
+      case X86::ANDNPDrr:
+      case X86::ANDNPSrr: {
+        auto NotVal = BinaryOperator::CreateNot(BitCastToInt1, "", RaisedBB);
+        Result = BinaryOperator::CreateAnd(NotVal, BitCastToInt2,
+                                           "andn_result", RaisedBB);
+      } break;
       case X86::PORrr:
       case X86::ORPDrr:
       case X86::ORPSrr:
@@ -1685,6 +1695,58 @@ bool X86MachineInstructionRaiser::raiseBinaryOpMemToRegInstr(
         new FCmpInst(*RaisedBB, CmpType, DestValue, LoadValue, "cmp");
 
     BinOpInst = SelectInst::Create(CmpInst, DestValue, LoadValue, nameString);
+  } break;
+  case X86::ANDPDrm:
+  case X86::ANDPSrm:
+  case X86::ANDNPDrm:
+  case X86::ANDNPSrm:
+  case X86::ORPDrm:
+  case X86::ORPSrm:
+  case X86::XORPDrm:
+  case X86::XORPSrm: {
+    LLVMContext &Ctx(MF.getFunction().getContext());
+    auto Int128Ty = Type::getInt128Ty(Ctx);
+    // BitCast operands to integer types to perform and/or/xor operation
+    auto DestValueInt = new BitCastInst(DestValue, Int128Ty, "", RaisedBB);
+    auto LoadValueInt = new BitCastInst(LoadValue, Int128Ty, "", RaisedBB);
+
+    Value *Result;
+    switch (Opcode) {
+    case X86::ANDPDrm:
+    case X86::ANDPSrm:
+      Result = BinaryOperator::CreateAnd(DestValueInt, LoadValueInt, "", RaisedBB);
+      break;
+    case X86::ANDNPDrm:
+    case X86::ANDNPSrm: {
+      auto NotVal = BinaryOperator::CreateNot(DestValueInt, "", RaisedBB);
+      Result = BinaryOperator::CreateAnd(NotVal, LoadValueInt, "", RaisedBB);
+    } break;
+    case X86::ORPDrm:
+    case X86::ORPSrm:
+      Result = BinaryOperator::CreateOr(DestValueInt, LoadValueInt, "", RaisedBB);
+      break;
+    case X86::XORPDrm:
+    case X86::XORPSrm:
+      Result = BinaryOperator::CreateXor(DestValueInt, LoadValueInt, "", RaisedBB);
+      break;
+    default:
+      llvm_unreachable("Unhandled opcode for packed bitwise instruction");
+    }
+    // Cast back to operand type
+    BinOpInst = new BitCastInst(Result, DestopTy);
+  } break;
+  case X86::PANDrm: {
+    BinOpInst = BinaryOperator::CreateAnd(DestValue, LoadValue);
+  } break;
+  case X86::PANDNrm: {
+    DestValue = BinaryOperator::CreateNot(DestValue, "", RaisedBB);
+    BinOpInst = BinaryOperator::CreateAnd(DestValue, LoadValue);
+  } break;
+  case X86::PORrm: {
+    BinOpInst = BinaryOperator::CreateOr(DestValue, LoadValue);
+  } break;
+  case X86::PXORrm: {
+    BinOpInst = BinaryOperator::CreateXor(DestValue, LoadValue);
   } break;
   case X86::ANDPDrm:
   case X86::ANDPSrm:

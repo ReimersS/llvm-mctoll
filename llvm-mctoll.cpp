@@ -90,6 +90,16 @@
 using namespace llvm;
 using namespace object;
 
+
+cl::opt<bool>
+    llvm::DisableOptimizations("disable-optimizations", cl::init(false),
+                      cl::desc("Disable code optimization passes during the raising process"));
+
+cl::opt<bool>
+    llvm::OptimizeFences("optimize-fences", cl::init(false),
+                      cl::desc("Enable the experimental fence optimizations"));
+
+
 static cl::OptionCategory LLVMMCToLLCategory("llvm-mctoll options");
 
 static cl::list<std::string> InputFileNames(cl::Positional,
@@ -197,10 +207,6 @@ cl::opt<std::string> llvm::CompilationDBDir(
              "details."),
     cl::cat(LLVMMCToLLCategory), cl::NotHidden);
 
-
-cl::opt<bool>
-    llvm::DisableOptimizations("disable-optimizations", cl::init(false),
-                      cl::desc("Disable code optimization passes during the raising process"));
 
 namespace {
 static ManagedStatic<std::vector<std::string>> RunPassNames;

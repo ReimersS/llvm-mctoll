@@ -6,6 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+
+#include "llvm-mctoll.h"
 #include "FencesPass.h"
 
 #include "llvm/IR/IRBuilder.h"
@@ -80,7 +82,8 @@ bool FencesPass::runOnFunction(Function &F) {
   if (!F.isDeclaration()) {
     for (BasicBlock &BB : F) {
       PlaceFencesInBlock(BB);
-      OptimizeFencesAway(BB);
+      if (OptimizeFences)
+        OptimizeFencesAway(BB);
     }
   }
   return true;

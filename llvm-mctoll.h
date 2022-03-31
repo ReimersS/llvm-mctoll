@@ -40,6 +40,8 @@ extern cl::opt<bool> PrintImmHex;
 extern cl::opt<DIDumpType> DwarfDumpType;
 extern cl::list<std::string> IncludeFileNames;
 extern cl::opt<std::string> CompilationDBDir;
+extern cl::opt<bool> DisableOptimizations;
+extern cl::opt<bool> OptimizeFences;
 
 // Various helper functions.
 void error(std::error_code ec);

@@ -197,6 +197,11 @@ cl::opt<std::string> llvm::CompilationDBDir(
              "details."),
     cl::cat(LLVMMCToLLCategory), cl::NotHidden);
 
+
+cl::opt<bool>
+    llvm::DisableOptimizations("disable-optimizations", cl::init(false),
+                      cl::desc("Disable code optimization passes during the raising process"));
+
 namespace {
 static ManagedStatic<std::vector<std::string>> RunPassNames;
 
@@ -1454,8 +1459,10 @@ static void DisassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
     PM.add(machineModuleInfo);
 
     // Add optimizations prior to emitting the output file.
-    PM.add(new PeepholeOptimizationPass());
-    PM.add(new PointerArgumentPromotionPass());
+    if (!DisableOptimizations) {
+      PM.add(new PeepholeOptimizationPass());
+      PM.add(new PointerArgumentPromotionPass());
+    }
     PM.add(new FencesPass());
 
     // Add print pass to emit ouptut file.

@@ -90,16 +90,6 @@
 using namespace llvm;
 using namespace object;
 
-
-cl::opt<bool>
-    llvm::DisableOptimizations("disable-optimizations", cl::init(false),
-                      cl::desc("Disable code optimization passes during the raising process"));
-
-cl::opt<bool>
-    llvm::OptimizeFences("optimize-fences", cl::init(false),
-                      cl::desc("Enable the experimental fence optimizations"));
-
-
 static cl::OptionCategory LLVMMCToLLCategory("llvm-mctoll options");
 
 static cl::list<std::string> InputFileNames(cl::Positional,
@@ -109,6 +99,11 @@ static cl::opt<std::string> OutputFilename("o", cl::desc("Output filename"),
                                            cl::value_desc("filename"),
                                            cl::cat(LLVMMCToLLCategory),
                                            cl::NotHidden);
+
+cl::opt<bool> llvm::DisableOptimizations("disable-optimizations", cl::desc("Disable code optimization passes during the raising process"), cl::init(false), cl::cat(LLVMMCToLLCategory), cl::NotHidden);
+
+cl::opt<bool> llvm::OptimizeFences("optimize-fences", cl::desc("Enable the experimental fence optimizations"), cl::init(false), cl::cat(LLVMMCToLLCategory), cl::NotHidden);
+
 
 cl::opt<std::string>
     MCPU("mcpu",
@@ -839,6 +834,10 @@ ModuleRaiser *getModuleRaiser(const TargetMachine *tm) {
 
 } // namespace RaiserContext
 
+
+bool DisableOptimizationsGlobal = false;
+bool OptimizeFencesGlobal = false;
+
 static void DisassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
   if (StartAddress > StopAddress)
     error("Start address should be less than stop address");
@@ -1465,11 +1464,23 @@ static void DisassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
     PM.add(machineModuleInfo);
 
     // Add optimizations prior to emitting the output file.
-    if (!DisableOptimizations) {
+    errs() << "*disable-optimizations: ";
+    if (DisableOptimizationsGlobal) {
+      errs() << "true\n";
+    } else {
+      errs() << "false\n";
+    }
+    if (!DisableOptimizationsGlobal) {
       PM.add(new PeepholeOptimizationPass());
       PM.add(new PointerArgumentPromotionPass());
     }
-    PM.add(new FencesPass());
+    errs() << "*optimize-fences: ";
+    if (OptimizeFencesGlobal) {
+      errs() << "true\n";
+    } else {
+      errs() << "false\n";
+    }
+    PM.add(new FencesPass(OptimizeFencesGlobal));
 
     // Add print pass to emit ouptut file.
     PM.add(new EmitRaisedOutputPass(*OS, OutputFormat));
@@ -1605,6 +1616,15 @@ int main(int argc, char **argv) {
       "\n*** Please submit an issue at "
       "https://github.com/microsoft/llvm-mctoll"
       "\n*** along with a back trace and a reproducer, if possible.\n");
+
+  errs() << "optimize-fences: ";
+  if (OptimizeFences) {
+    errs() << "true\n";
+  } else {
+    errs() << "false\n";
+  }
+  DisableOptimizationsGlobal = DisableOptimizations;
+  OptimizeFencesGlobal = OptimizeFences;
 
   // Create a string vector of include files to parse for external definitions
   std::vector<string> IncludeFNames;

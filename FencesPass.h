@@ -21,10 +21,11 @@
 using namespace llvm;
 
 class FencesPass : public FunctionPass {
+  bool OptimizeFences;
 public:
   static char ID;
-  FencesPass()
-      : FunctionPass(ID) {}
+  FencesPass(bool OptimizeFences=false)
+      : FunctionPass(ID), OptimizeFences(OptimizeFences) {}
 
   bool runOnFunction(Function &F) override;
 

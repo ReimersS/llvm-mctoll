@@ -7,7 +7,6 @@
 //===----------------------------------------------------------------------===//
 
 
-#include "llvm-mctoll.h"
 #include "FencesPass.h"
 
 #include "llvm/IR/IRBuilder.h"
@@ -80,6 +79,12 @@ static void OptimizeFencesAway(BasicBlock &BB) {
 
 bool FencesPass::runOnFunction(Function &F) {
   if (!F.isDeclaration()) {
+    errs() << "optimize-fences: ";
+    if (OptimizeFences) {
+      errs() << "true\n";
+    } else {
+      errs() << "false\n";
+    }
     for (BasicBlock &BB : F) {
       PlaceFencesInBlock(BB);
       if (OptimizeFences)

@@ -13,6 +13,7 @@
 
 #include "X86MachineInstructionRaiser.h"
 #include "IncludedFileInfo.h"
+#include "MCTargetDesc/X86MCTargetDesc.h"
 #include "Raiser/MachineFunctionRaiser.h"
 #include "X86InstrBuilder.h"
 #include "X86ModuleRaiser.h"
@@ -28,8 +29,11 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
@@ -1641,6 +1645,37 @@ bool X86MachineInstructionRaiser::raiseBinaryOpRegToRegMachineInstr(
 
     // Update the value of DstReg
     raisedValues->setPhysRegSSAValue(DstReg, MBBNo, DstValue);
+  } break;
+  case X86::PMULUDQrr: {
+    LLVMContext &Ctx(MF.getFunction().getContext());
+
+    DstReg = MI.getOperand(DestOpIndex).getReg();
+	Value *Src1Value = ExplicitSrcValues.at(0);
+    Value *Src2Value = ExplicitSrcValues.at(1);
+
+	FixedVectorType *SrcTy = FixedVectorType::get(Type::getInt32Ty(Ctx), 4);
+	Type *ETy = SrcTy->getElementType();
+	assert(ETy->isIntegerTy() && "Expected Integer Element Type");
+
+	FixedVectorType *DstTy = FixedVectorType::get(IntegerType::get(Ctx, ETy->getIntegerBitWidth()*2), SrcTy->getNumElements()/2);
+
+	Value *Result = ConstantInt::get(DstTy, 0);
+	size_t Jdx = 0;
+	for (size_t Idx = 0; Idx < SrcTy->getNumElements(); Idx+=2) {
+      // Opcode tells us that elements are unsigned
+      Value *Src1 = ExtractElementInst::Create(Src1Value, ConstantInt::get(ETy, Idx), "", RaisedBB);
+	  Src1 = CastInst::Create(Instruction::CastOps::ZExt, Src1, DstTy->getElementType(), "", RaisedBB);
+      Value *Src2 = ExtractElementInst::Create(Src2Value, ConstantInt::get(ETy, Idx), "", RaisedBB);
+	  Src2 = CastInst::Create(Instruction::CastOps::ZExt, Src2, DstTy->getElementType(), "", RaisedBB);
+	  auto *Tmp = BinaryOperator::CreateMul(Src1, Src2);
+	  auto *At = ConstantInt::get(DstTy->getElementType(), Jdx++);
+	  Result = InsertElementInst::Create(Result, Tmp, At, "", RaisedBB);
+    }
+
+    // Copy any necessary rodata related metadata
+    raisedValues->setInstMetadataRODataIndex(Src1Value, (Instruction *)Result);
+    // Update the value of DstReg
+    raisedValues->setPhysRegSSAValue(DstReg, MBBNo, Result);
   } break;
   case X86::PMAXSBrr:
   case X86::PMAXSDrr:
@@ -4439,6 +4474,29 @@ bool X86MachineInstructionRaiser::raiseBinaryOpImmToRegMachineInstr(
 
       BinOpInstr = dyn_cast<Instruction>(Result);
     } break;
+	case X86::PSRLWri:
+	case X86::PSRLDri:
+	case X86::PSRLQri: { 
+      ConstantInt *Imm = dyn_cast<ConstantInt>(SrcOp2Value);
+      assert(Imm && "Expected immediate for psrlX to be defined");
+
+      LLVMContext &Ctx(MF.getFunction().getContext());
+
+	  Type *ETy;
+	  switch (MI.getOpcode()) {
+		case X86::PSRLWri: ETy = Type::getInt16Ty(Ctx); break;
+		case X86::PSRLDri: ETy = Type::getInt32Ty(Ctx); break;
+		case X86::PSRLQri: ETy = Type::getInt64Ty(Ctx); break;
+	  }
+	  size_t ENum = 128 / ETy->getPrimitiveSizeInBits();
+	  FixedVectorType *VecTy = FixedVectorType::get(ETy, ENum);
+      SrcOp1Value = getRaisedValues()->reinterpretSSERegValue(SrcOp1Value,
+                                                              VecTy, RaisedBB);
+
+	  for (size_t Idx = 0; Idx < ENum; Idx++) {
+		  // TODO: WIP
+	  }
+	} break;	
     default:
       LLVM_DEBUG(MI.dump());
       assert(false && "Unhandled reg to imm binary operator instruction");
@@ -4893,7 +4951,7 @@ bool X86MachineInstructionRaiser::raiseGenericMachineInstr(
     break;
   default: {
     dbgs() << "*** Generic instruction not raised : " << MF.getName().data()
-           << "\n\t";
+           << "\n" << " Kind: " << (unsigned)getInstructionKind(Opcode) << "\n\t";
     MI.print(dbgs());
     Success = false;
   }

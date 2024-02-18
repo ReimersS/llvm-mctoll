@@ -31,6 +31,7 @@
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/Casting.h"
@@ -1667,7 +1668,7 @@ bool X86MachineInstructionRaiser::raiseBinaryOpRegToRegMachineInstr(
 	  Src1 = CastInst::Create(Instruction::CastOps::ZExt, Src1, DstTy->getElementType(), "", RaisedBB);
       Value *Src2 = ExtractElementInst::Create(Src2Value, ConstantInt::get(ETy, Idx), "", RaisedBB);
 	  Src2 = CastInst::Create(Instruction::CastOps::ZExt, Src2, DstTy->getElementType(), "", RaisedBB);
-	  auto *Tmp = BinaryOperator::CreateMul(Src1, Src2);
+	  auto *Tmp = BinaryOperator::CreateMul(Src1, Src2, "", RaisedBB);
 	  auto *At = ConstantInt::get(DstTy->getElementType(), Jdx++);
 	  Result = InsertElementInst::Create(Result, Tmp, At, "", RaisedBB);
     }
@@ -1815,6 +1816,42 @@ bool X86MachineInstructionRaiser::raiseBinaryOpRegToRegMachineInstr(
 
     // Copy any necessary rodata related metadata
     raisedValues->setInstMetadataRODataIndex(Src1Value, (Instruction *)Result);
+    // Update the value of DstReg
+    raisedValues->setPhysRegSSAValue(DstReg, MBBNo, Result);
+  } break;
+  case X86::PUNPCKLBWrr:
+  case X86::PUNPCKLWDrr:
+  case X86::PUNPCKLDQrr:
+  case X86::PUNPCKLQDQrr: {
+    Value *Src1Value = ExplicitSrcValues.at(0);
+    Value *Src2Value = ExplicitSrcValues.at(1);
+    DstReg = MI.getOperand(DestOpIndex).getReg();
+    LLVMContext &Ctx(MF.getFunction().getContext());
+  
+    Type *ETy;
+    switch (MI.getOpcode()) {
+  	case X86::PUNPCKLBWrr: ETy = Type::getInt8Ty(Ctx); break;
+  	case X86::PUNPCKLWDrr: ETy = Type::getInt16Ty(Ctx); break;
+  	case X86::PUNPCKLDQrr: ETy = Type::getInt32Ty(Ctx); break;
+  	case X86::PUNPCKLQDQrr: ETy = Type::getInt64Ty(Ctx); break;
+    }
+    size_t ENum = 128 / ETy->getPrimitiveSizeInBits();
+    FixedVectorType *VecTy = FixedVectorType::get(ETy, ENum);
+    Src1Value = getRaisedValues()->reinterpretSSERegValue(Src1Value,
+                                                            VecTy, RaisedBB);
+    Src2Value = getRaisedValues()->reinterpretSSERegValue(Src2Value,
+                                                            VecTy, RaisedBB);
+  
+    Value *Result = ConstantInt::get(VecTy, 0);
+    for (size_t Idx = 0; Idx < ENum/2; Idx++) {
+  	  auto *Src1 = ExtractElementInst::Create(Src1Value, ConstantInt::get(ETy, Idx), "", RaisedBB);
+  	  auto *Src2 = ExtractElementInst::Create(Src2Value, ConstantInt::get(ETy, Idx), "", RaisedBB);
+  	  Result = InsertElementInst::Create(Result, Src1, ConstantInt::get(ETy, Idx), "", RaisedBB);
+  	  Result = InsertElementInst::Create(Result, Src2, ConstantInt::get(ETy, Idx+1), "", RaisedBB);
+    }
+    // Copy any necessary rodata related metadata
+	raisedValues->setInstMetadataRODataIndex(Src1Value, (Instruction *)Result);
+    raisedValues->setInstMetadataRODataIndex(Src2Value, (Instruction *)Result);
     // Update the value of DstReg
     raisedValues->setPhysRegSSAValue(DstReg, MBBNo, Result);
   } break;
@@ -4476,7 +4513,7 @@ bool X86MachineInstructionRaiser::raiseBinaryOpImmToRegMachineInstr(
     } break;
 	case X86::PSRLWri:
 	case X86::PSRLDri:
-	case X86::PSRLQri: { 
+	case X86::PSRLQri: {
       ConstantInt *Imm = dyn_cast<ConstantInt>(SrcOp2Value);
       assert(Imm && "Expected immediate for psrlX to be defined");
 
@@ -4493,10 +4530,31 @@ bool X86MachineInstructionRaiser::raiseBinaryOpImmToRegMachineInstr(
       SrcOp1Value = getRaisedValues()->reinterpretSSERegValue(SrcOp1Value,
                                                               VecTy, RaisedBB);
 
+	  Value *Src2 = CastInst::Create(Instruction::CastOps::Trunc, Imm, ETy, "", RaisedBB);
+	  Value *Result = ConstantInt::get(VecTy, 0);
 	  for (size_t Idx = 0; Idx < ENum; Idx++) {
-		  // TODO: WIP
+		  auto *Src1 = ExtractElementInst::Create(SrcOp1Value, ConstantInt::get(ETy, Idx), "", RaisedBB);
+		  auto *Shift = BinaryOperator::CreateLShr(Src1, Src2, "", RaisedBB);
+		  if (Idx != ENum-1) {
+			Result = InsertElementInst::Create(Result, Shift, ConstantInt::get(ETy, Idx), "", RaisedBB);
+		  } else {
+			Result = InsertElementInst::Create(Result, Shift, ConstantInt::get(ETy, Idx), "");
+		  }
 	  }
-	} break;	
+      BinOpInstr = dyn_cast<Instruction>(Result);
+	} break;
+	case X86::PSRLDQri: { 
+      ConstantInt *Imm = dyn_cast<ConstantInt>(SrcOp2Value);
+      assert(Imm && "Expected immediate for psrlX to be defined");
+
+      LLVMContext &Ctx(MF.getFunction().getContext());
+
+	  Type *Ty = Type::getInt128Ty(Ctx);
+      Value *Src1 = getRaisedValues()->reinterpretSSERegValue(SrcOp1Value,
+                                                              Ty, RaisedBB);
+	  Value *Src2 = BinaryOperator::CreateMul(Imm, ConstantInt::get(Ty, 8), "", RaisedBB);
+	  BinOpInstr = BinaryOperator::CreateLShr(Src1, Src2);
+	} break;
     default:
       LLVM_DEBUG(MI.dump());
       assert(false && "Unhandled reg to imm binary operator instruction");

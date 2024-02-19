@@ -3442,6 +3442,7 @@ bool X86MachineInstructionRaiser::raiseCompareMachineInstr(
          "Unhandled memory referencing compare instruction");
   SmallVector<Value *, 2> OpValues{nullptr, nullptr};
 
+  LLVMContext &Ctx(MF.getFunction().getContext());
   // Get operand indices
   if (IsMemCompare) {
     // This is a memory referencing instruction.
@@ -3454,7 +3455,6 @@ bool X86MachineInstructionRaiser::raiseCompareMachineInstr(
     if (NonMemRefOp->isReg()) {
       NonMemRefOpTy = getPhysRegOperandType(MI, NonMemRefOpIndex);
     } else if (NonMemRefOp->isImm()) {
-      LLVMContext &Ctx(MF.getFunction().getContext());
       auto MemOpSize = getInstructionMemOpSize(MI.getOpcode());
       assert(MemOpSize != 0 && "Expected mem op size to be > 0");
       NonMemRefOpTy = Type::getIntNTy(Ctx, MemOpSize * 8);
@@ -3540,13 +3540,23 @@ bool X86MachineInstructionRaiser::raiseCompareMachineInstr(
     if (CmpOp1.isImm()) {
       assert((OpValues[1] != nullptr) &&
              "At least one value expected while raising compare instruction");
-      OpValues[0] = ConstantInt::get(OpValues[1]->getType(), CmpOp1.getImm());
+	  auto *Ty = OpValues[1]->getType();
+	  if (!Ty->isPointerTy()) {
+		OpValues[0] = ConstantInt::get(Ty, CmpOp1.getImm());
+	  } else {
+		OpValues[0] = ConstantInt::get(Type::getInt64Ty(Ctx), CmpOp1.getImm());
+	  }
     }
 
     if (CmpOp2.isImm()) {
       assert((OpValues[0] != nullptr) &&
              "At least one value expected while raising compare instruction");
-      OpValues[1] = ConstantInt::get(OpValues[0]->getType(), CmpOp2.getImm());
+	  auto *Ty = OpValues[0]->getType();
+	  if (!Ty->isPointerTy()) {
+		OpValues[1] = ConstantInt::get(Ty, CmpOp2.getImm());
+	  } else {
+		OpValues[1] = ConstantInt::get(Type::getInt64Ty(Ctx), CmpOp2.getImm());
+	  }
     }
   }
   assert(OpValues[0] != nullptr && OpValues[1] != nullptr &&

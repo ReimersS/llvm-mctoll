@@ -1822,7 +1822,11 @@ bool X86MachineInstructionRaiser::raiseBinaryOpRegToRegMachineInstr(
   case X86::PUNPCKLBWrr:
   case X86::PUNPCKLWDrr:
   case X86::PUNPCKLDQrr:
-  case X86::PUNPCKLQDQrr: {
+  case X86::PUNPCKLQDQrr:
+  case X86::PUNPCKHBWrr:
+  case X86::PUNPCKHWDrr:
+  case X86::PUNPCKHDQrr:
+  case X86::PUNPCKHQDQrr: {
     Value *Src1Value = ExplicitSrcValues.at(0);
     Value *Src2Value = ExplicitSrcValues.at(1);
     DstReg = MI.getOperand(DestOpIndex).getReg();
@@ -1830,12 +1834,25 @@ bool X86MachineInstructionRaiser::raiseBinaryOpRegToRegMachineInstr(
   
     Type *ETy;
     switch (MI.getOpcode()) {
-  	case X86::PUNPCKLBWrr: ETy = Type::getInt8Ty(Ctx); break;
-  	case X86::PUNPCKLWDrr: ETy = Type::getInt16Ty(Ctx); break;
-  	case X86::PUNPCKLDQrr: ETy = Type::getInt32Ty(Ctx); break;
-  	case X86::PUNPCKLQDQrr: ETy = Type::getInt64Ty(Ctx); break;
+  	case X86::PUNPCKLBWrr:
+	case X86::PUNPCKHBWrr: ETy = Type::getInt8Ty(Ctx); break;
+  	case X86::PUNPCKLWDrr:
+  	case X86::PUNPCKHWDrr: ETy = Type::getInt16Ty(Ctx); break;
+  	case X86::PUNPCKLDQrr:
+	case X86::PUNPCKHDQrr: ETy = Type::getInt32Ty(Ctx); break;
+	case X86::PUNPCKLQDQrr:
+	case X86::PUNPCKHQDQrr: ETy = Type::getInt64Ty(Ctx); break;
     }
     size_t ENum = 128 / ETy->getPrimitiveSizeInBits();
+	size_t HiLo = 0;
+
+	// Offset to upper half of the vector for H instructions
+    switch (MI.getOpcode()) {
+	case X86::PUNPCKHBWrr:
+  	case X86::PUNPCKHWDrr:
+	case X86::PUNPCKHDQrr:
+	case X86::PUNPCKHQDQrr: HiLo = ENum/2; break;
+    }
     FixedVectorType *VecTy = FixedVectorType::get(ETy, ENum);
     Src1Value = getRaisedValues()->reinterpretSSERegValue(Src1Value,
                                                             VecTy, RaisedBB);
@@ -1844,10 +1861,78 @@ bool X86MachineInstructionRaiser::raiseBinaryOpRegToRegMachineInstr(
   
     Value *Result = ConstantInt::get(VecTy, 0);
     for (size_t Idx = 0; Idx < ENum/2; Idx++) {
-  	  auto *Src1 = ExtractElementInst::Create(Src1Value, ConstantInt::get(ETy, Idx), "", RaisedBB);
-  	  auto *Src2 = ExtractElementInst::Create(Src2Value, ConstantInt::get(ETy, Idx), "", RaisedBB);
+  	  auto *Src1 = ExtractElementInst::Create(Src1Value, ConstantInt::get(ETy, Idx+HiLo), "", RaisedBB);
+  	  auto *Src2 = ExtractElementInst::Create(Src2Value, ConstantInt::get(ETy, Idx+HiLo), "", RaisedBB);
   	  Result = InsertElementInst::Create(Result, Src1, ConstantInt::get(ETy, Idx), "", RaisedBB);
   	  Result = InsertElementInst::Create(Result, Src2, ConstantInt::get(ETy, Idx+1), "", RaisedBB);
+    }
+    // Copy any necessary rodata related metadata
+	raisedValues->setInstMetadataRODataIndex(Src1Value, (Instruction *)Result);
+    raisedValues->setInstMetadataRODataIndex(Src2Value, (Instruction *)Result);
+    // Update the value of DstReg
+    raisedValues->setPhysRegSSAValue(DstReg, MBBNo, Result);
+  } break;
+  case X86::PACKSSDWrr:
+  case X86::PACKUSDWrr:
+  case X86::PACKSSWBrr:
+  case X86::PACKUSWBrr: {
+    Value *Src1Value = ExplicitSrcValues.at(0);
+    Value *Src2Value = ExplicitSrcValues.at(1);
+    DstReg = MI.getOperand(DestOpIndex).getReg();
+    LLVMContext &Ctx(MF.getFunction().getContext());
+  
+    Type *ETy;
+	bool IsSigned;
+	Value *Max;
+	Value *Min;
+    switch (MI.getOpcode()) {
+		case X86::PACKSSDWrr: { Max = ConstantInt::get(Type::getInt16Ty(Ctx), 0x7FFF);
+                                Min = ConstantInt::get(Type::getInt16Ty(Ctx), 0x8000);
+								ETy = Type::getInt32Ty(Ctx); IsSigned = true;} break;
+		case X86::PACKSSWBrr: { Max = ConstantInt::get(Type::getInt8Ty(Ctx), 0x7F);
+                                Min = ConstantInt::get(Type::getInt8Ty(Ctx), 0x80);
+								ETy = Type::getInt16Ty(Ctx); IsSigned = true;} break;
+		case X86::PACKUSDWrr: { Max = ConstantInt::get(Type::getInt16Ty(Ctx), 0xFFFF);
+                                Min = ConstantInt::get(Type::getInt16Ty(Ctx), 0x0000);
+								ETy = Type::getInt32Ty(Ctx); IsSigned = false;} break;
+		case X86::PACKUSWBrr: { Max = ConstantInt::get(Type::getInt8Ty(Ctx), 0xFF);
+                                Min = ConstantInt::get(Type::getInt8Ty(Ctx), 0x00);
+								ETy = Type::getInt16Ty(Ctx); IsSigned = false;} break;
+	}
+
+    size_t ENum = 128 / ETy->getPrimitiveSizeInBits();
+    FixedVectorType *SrcTy = FixedVectorType::get(ETy, ENum);
+    FixedVectorType *DstTy = FixedVectorType::get(Max->getType(), ENum*2);
+
+    Src1Value = getRaisedValues()->reinterpretSSERegValue(Src1Value,
+                                                            SrcTy, RaisedBB);
+    Src2Value = getRaisedValues()->reinterpretSSERegValue(Src2Value,
+                                                            SrcTy, RaisedBB);
+
+	auto CmpMax = IsSigned ? CmpInst::Predicate::ICMP_SGT : CmpInst::Predicate::ICMP_UGT;
+	auto CmpMin = IsSigned ? CmpInst::Predicate::ICMP_SLT : CmpInst::Predicate::ICMP_ULT;
+	auto *ExtMax = ConstantInt::get(Max->getType()->getExtendedType(), ((ConstantInt *)Max)->getSExtValue());
+	auto *ExtMin = ConstantInt::get(Min->getType()->getExtendedType(), ((ConstantInt *)Min)->getSExtValue());
+
+	Value *Result = ConstantInt::get(DstTy, 0);
+    for (size_t Idx = 0; Idx < ENum; Idx++) {
+  	  auto *Src1 = ExtractElementInst::Create(Src1Value, ConstantInt::get(ETy, Idx), "", RaisedBB);
+  	  auto *Src2 = ExtractElementInst::Create(Src2Value, ConstantInt::get(ETy, Idx), "", RaisedBB);
+
+	  auto *IsGTMax1 = new ICmpInst(*RaisedBB, CmpMax, Src1, ExtMax);
+	  auto *IsLTMin1 = new ICmpInst(*RaisedBB, CmpMin, Src1, ExtMin);
+	  auto *IsGTMax2 = new ICmpInst(*RaisedBB, CmpMax, Src2, ExtMax);
+	  auto *IsLTMin2 = new ICmpInst(*RaisedBB, CmpMin, Src2, ExtMin);
+
+	  auto *Trunc1 = CastInst::Create(CastInst::CastOps::Trunc, Src1, Max->getType(), "", RaisedBB);
+	  auto *Trunc2 = CastInst::Create(CastInst::CastOps::Trunc, Src2, Max->getType(), "", RaisedBB);
+      auto *Res1 = SelectInst::Create(IsGTMax1, Max, Trunc1, "", RaisedBB);
+      auto *Res2 = SelectInst::Create(IsGTMax2, Max, Trunc2, "", RaisedBB);
+      Res1 = SelectInst::Create(IsLTMin1, Min, Res1, "", RaisedBB);
+      Res2 = SelectInst::Create(IsLTMin2, Min, Res2, "", RaisedBB);
+
+  	  Result = InsertElementInst::Create(Result, Res1, ConstantInt::get(ETy, Idx*2), "", RaisedBB);
+  	  Result = InsertElementInst::Create(Result, Res2, ConstantInt::get(ETy, Idx*2 +1), "", RaisedBB);
     }
     // Copy any necessary rodata related metadata
 	raisedValues->setInstMetadataRODataIndex(Src1Value, (Instruction *)Result);

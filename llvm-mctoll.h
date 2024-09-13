@@ -37,6 +37,16 @@ extern std::vector<std::string> FilterSections;
 extern bool Disassemble;
 extern std::vector<std::string> IncludeFileNames;
 extern std::string CompilationDBDir;
+extern std::string FilterFunctionSet;
+extern std::vector<std::string> FilterSections;
+extern std::string DisSymName;
+extern bool NonVerbose;
+extern bool SymbolTable;
+extern bool UnwindInfo;
+extern bool PrintImmHex;
+extern Optional<DIDumpType> DwarfDumpType;
+extern bool DisassembleOptimizations;
+extern bool OptimizedFences;
 
 // Various helper functions.
 bool isRelocAddressLess(object::RelocationRef A, object::RelocationRef B);

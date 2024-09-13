@@ -51,6 +51,8 @@ using namespace llvm;
 using namespace llvm::mctoll;
 using namespace llvm::mctoll::X86RegisterUtils;
 
+std::set<std::string> X86MachineInstructionRaiser::DynRelocatedGlobalVariables;
+
 // Constructor
 
 X86MachineInstructionRaiser::X86MachineInstructionRaiser(MachineFunction &MF,
@@ -2169,6 +2171,10 @@ bool X86MachineInstructionRaiser::raiseBinaryOpMemToRegInstr(
     DestValue = BinaryOperator::CreateNot(DestValue, "", RaisedBB);
     BinOpInst = BinaryOperator::CreateAnd(DestValue, LoadValue);
   } break;
+  case X86::PANDNrm: {
+    DestValue = BinaryOperator::CreateNot(DestValue, "", RaisedBB);
+    BinOpInst = BinaryOperator::CreateAnd(DestValue, LoadValue);
+  } break;
   case X86::PORrm: {
     assert(DestValue != nullptr &&
            "Encountered instruction with undefined register");
@@ -2717,18 +2723,18 @@ bool X86MachineInstructionRaiser::raiseMoveFromMemInstr(const MachineInstr &MI,
   // Following are the exceptions when MemRefValue needs to be considered as
   // memory content and not as memory reference.
   if (IsPCRelMemRef) {
-    // If it is a PC-relative global variable with an initializer, it is memory
-    // content and should not be loaded from.
-    if (auto *GV = dyn_cast<GlobalVariable>(MemRefValue))
-      LoadFromMemrefValue = !(GV->hasInitializer());
-    // If it is not a PC-relative constant expression accessed using
-    // GetElementPtrInst, it is memory content and should not be loaded from.
-    else {
-      const ConstantExpr *CExpr = dyn_cast<ConstantExpr>(MemRefValue);
-      if (CExpr != nullptr) {
-        LoadFromMemrefValue =
-            (CExpr->getOpcode() == Instruction::GetElementPtr);
+    // If it is a PC-relative dynamically relocated global variable, it is
+    // memory content and should not be loaded from.
+    if (auto *GV = dyn_cast<GlobalVariable>(MemRefValue)) {
+      if (isDynRelocatedGlobalVariable(GV->getName().str())) {
+        LoadFromMemrefValue = false;
+      } else {
+        LoadFromMemrefValue = true;
       }
+      // If it is not a PC-relative constant expression accessed using
+      // GetElementPtrInst, it is memory content and should not be loaded from.
+    } else if (auto *CExpr = dyn_cast<ConstantExpr>(MemRefValue)) {
+      LoadFromMemrefValue = (CExpr->getOpcode() == Instruction::GetElementPtr);
     }
   }
 
@@ -5387,19 +5393,14 @@ bool X86MachineInstructionRaiser::raiseCallMachineInstr(
       uint8_t PositionMask = 0;
 
       const MachineBasicBlock *CurMBB = MI.getParent();
-      // If an argument register does not have a definition in a block that
-      // has a call instruction between block entry and MI, there is no need
-      // (and is not correct) to look for a reaching definition in its
-      // predecessors.
-      bool HasCallInst = false;
       unsigned int ArgNo = 1;
       // Find if CurMBB has call between block entry and MI
 
       for (auto ArgReg : GPR64ArgRegs64Bit) {
-        if (getPhysRegDefiningInstInBlock(ArgReg, &MI, CurMBB, MCID::Call,
-                                          HasCallInst) != nullptr)
+        BitVector BlocksVisited(MF.getNumBlockIDs(), false);
+        if (hasReachingRegister(CurMBB, &MI, ArgReg, BlocksVisited)) {
           PositionMask |= (1 << ArgNo);
-        else if (!HasCallInst) {
+        elif (!HasCallInst) {
           // Look to see if the argument register has a reaching definition in
           // the predecessors of CurMBB.
           unsigned int ReachDefPredEdgeCount = 0;

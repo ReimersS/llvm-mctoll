@@ -12,11 +12,13 @@
 
 #include "llvm-mctoll.h"
 #include "EmitRaisedOutputPass.h"
+#include "IncludedFileInfo.h"
+#include "MCInstOrData.h"
+#include "MachineFunctionRaiser.h"
+#include "ModuleRaiser.h"
+#include "FencesPass.h"
 #include "PeepholeOptimizationPass.h"
-#include "Raiser/IncludedFileInfo.h"
-#include "Raiser/MCInstOrData.h"
-#include "Raiser/MachineFunctionRaiser.h"
-#include "Raiser/ModuleRaiser.h"
+#include "PointerArgumentPromotionPass.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
@@ -174,6 +176,7 @@ std::vector<std::string> mctoll::IncludeFileNames;
 std::string mctoll::CompilationDBDir;
 
 static bool PrintImmHex;
+
 
 namespace {
 static ManagedStatic<std::vector<std::string>> RunPassNames;
@@ -700,6 +703,24 @@ static void initializeAllModuleRaisers() {
 #define MODULE_RAISER(TargetName) register##TargetName##ModuleRaiser();
 #include "Raisers.def"
 }
+
+ModuleRaiser *getModuleRaiser(const TargetMachine *tm) {
+  ModuleRaiser *mr = nullptr;
+  auto arch = tm->getTargetTriple().getArch();
+  for (auto m : ModuleRaiserRegistry)
+    if (m->getArchType() == arch) {
+      mr = m;
+      break;
+    }
+  assert(nullptr != mr && "This arch has not yet supported for raising!\n");
+  return mr;
+}
+
+} // namespace RaiserContext
+
+
+bool DisableOptimizationsGlobal = false;
+bool OptimizeFencesGlobal = false;
 
 static void disassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
   if (StartAddress > StopAddress)
@@ -1331,7 +1352,23 @@ static void disassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
     PM.add(MachineModuleInfo);
 
     // Add optimizations prior to emitting the output file.
-    PM.add(new PeepholeOptimizationPass());
+    errs() << "*disable-optimizations: ";
+    if (DisableOptimizationsGlobal) {
+      errs() << "true\n";
+    } else {
+      errs() << "false\n";
+    }
+    if (!DisableOptimizationsGlobal) {
+      PM.add(new PeepholeOptimizationPass());
+      PM.add(new PointerArgumentPromotionPass());
+    }
+    errs() << "*optimize-fences: ";
+    if (OptimizeFencesGlobal) {
+      errs() << "true\n";
+    } else {
+      errs() << "false\n";
+    }
+    PM.add(new FencesPass(OptimizeFencesGlobal));
 
     // Add print pass to emit ouptut file.
     PM.add(new EmitRaisedOutputPass(*OS, OutputFileType));
@@ -1558,6 +1595,22 @@ int main(int argc, char **argv) {
       "\n*** Please submit an issue at "
       "https://github.com/microsoft/llvm-mctoll"
       "\n*** along with a back trace and a reproducer, if possible.\n");
+
+  errs() << "optimize-fences: ";
+  if (OptimizeFences) {
+    errs() << "true\n";
+  } else {
+    errs() << "false\n";
+  }
+  DisableOptimizationsGlobal = DisableOptimizations;
+  OptimizeFencesGlobal = OptimizeFences;
+
+  // Create a string vector of include files to parse for external definitions
+  std::vector<string> IncludeFNames;
+
+  for (auto fname : IncludeFileNames) {
+    IncludeFNames.emplace_back(fname);
+  }
 
   // Create a string vector with copy of input file as positional arguments
   // that would be erased as part of include file parsing done by

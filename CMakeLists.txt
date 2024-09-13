@@ -70,9 +70,12 @@ add_llvm_tool(llvm-mctoll
   COFFDump.cpp
   MachODump.cpp
   EmitRaisedOutputPass.cpp
+  FencesPass.cpp
   PeepholeOptimizationPass.cpp
   DEPENDS
   MctoolOptsTableGen
+  PointerArgumentPromotionPass.cpp
+  RuntimeFunction.cpp
 )
 
 # Link against LLVM libraries and target-specific Raiser libraries

@@ -197,18 +197,18 @@ Value *X86MachineInstructionRaiser::loadMemoryRefValue(
   // Following are the exceptions when MemRefValue needs to be considered as
   // memory content and not as memory reference.
   if (IsPCRelMemRef) {
-    // If it is a PC-relative global variable with an initializer, it is memory
-    // content and should not be loaded from.
-    if (auto *GV = dyn_cast<GlobalVariable>(MemRefValue))
-      LoadFromMemrefValue = !(GV->hasInitializer());
+    // If it is a PC-relative dynamically relocated global variable, it is
+    // memory content and should not be loaded from.
+    if (auto *GV = dyn_cast<GlobalVariable>(MemRefValue)) {
+      if (isDynRelocatedGlobalVariable(GV->getName().str())) {
+        LoadFromMemrefValue = false;
+      } else {
+        LoadFromMemrefValue = true;
+      }
     // If it is not a PC-relative constant expression accessed using
     // GetElementPtrInst, it is memory content and should not be loaded from.
-    else {
-      const ConstantExpr *CExpr = dyn_cast<ConstantExpr>(MemRefValue);
-      if (CExpr != nullptr) {
-        LoadFromMemrefValue =
-            (CExpr->getOpcode() == Instruction::GetElementPtr);
-      }
+    } else if (auto *CExpr = dyn_cast<ConstantExpr>(MemRefValue)) {
+      LoadFromMemrefValue = (CExpr->getOpcode() == Instruction::GetElementPtr);
     }
   }
 
@@ -473,6 +473,41 @@ const MachineInstr *X86MachineInstructionRaiser::getPhysRegDefiningInstInBlock(
   }
 
   return nullptr;
+}
+
+// Check recursively if either this MBB or all of it's predecessors define Reg
+bool X86MachineInstructionRaiser::hasReachingRegister(
+    const MachineBasicBlock *MBB, const MachineInstr *StartMI, MCPhysReg Reg,
+    BitVector BlocksVisited) {
+  // If MBB is already visited, it is part of a loop. Return true
+  if (BlocksVisited[MBB->getNumber()]) {
+    return true;
+  }
+
+  BlocksVisited.set(MBB->getNumber());
+  // If an argument register does not have a definition in a block that
+  // has a call instruction between block entry and MI, there is no need
+  // (and is not correct) to look for a reaching definition in its
+  // predecessors.
+  bool HasCallInst = false;
+  // First check if this MBB defines this register
+  if (getPhysRegDefiningInstInBlock(Reg, StartMI, MBB, MCID::Call, HasCallInst) !=
+      nullptr) {
+    return true;
+  } else if (!HasCallInst) {
+    // MBB does not define the register, check predecessors
+    // If a MBB has no predecessor, Reg is not defined for this block
+    bool result = MBB->pred_size() > 0;
+
+    for (auto Pred : MBB->predecessors()) {
+      result &= hasReachingRegister(Pred, nullptr, Reg, BlocksVisited);
+    }
+
+    return result;
+  } else {
+    // Block has call instruction and does not define Reg
+    return false;
+  }
 }
 
 // FPU Access functions
@@ -754,15 +789,15 @@ Value *X86MachineInstructionRaiser::createPCRelativeAccesssValue(
               break;
             }
           }
-
           Constant *GlobalInit;
           if (IncludedFileInfo::isExternalVariable(Symname->str())) {
             GlobalInit = nullptr;
             Lnkg = GlobalValue::ExternalLinkage;
+          } else if (DynRelocType == ELF::R_X86_64_GLOB_DAT) {
+            GlobalInit = ConstantInt::get(GlobalValTy, SymbVal);
+            DynRelocatedGlobalVariables.insert(Symname->str());
           } else {
-            GlobalInit = (DynRelocType == ELF::R_X86_64_GLOB_DAT)
-                             ? ConstantInt::get(GlobalValTy, SymbVal)
-                             : nullptr;
+            GlobalInit = nullptr;
           }
 
           auto *GlobalVal = new GlobalVariable(*(MR->getModule()), GlobalValTy,

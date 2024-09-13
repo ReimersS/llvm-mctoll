@@ -85,6 +85,10 @@ private:
   // at the exit of the MBB.
   std::map<int, MCPhysRegSizeMap> PerMBBDefinedPhysRegMap;
 
+  // Stores all global variables that are dynamically relocated, e.g. through PLT
+  // Usually these are global variables in shared objects
+  static std::set<std::string> DynRelocatedGlobalVariables;
+
   static const uint8_t FPUSTACK_SZ = 8;
   struct {
     int8_t TOP;
@@ -211,6 +215,9 @@ private:
   getPhysRegDefiningInstInBlock(int PhysReg, const MachineInstr *StartMI,
                                 const MachineBasicBlock *MBB,
                                 unsigned StopAtInstProp, bool &HasStopInst);
+  bool hasReachingRegister(const MachineBasicBlock *MBB,
+                           const MachineInstr *StartMI, MCPhysReg reg,
+                           BitVector BlocksVisited);
 
   void addRegisterToFunctionLiveInSet(MCPhysRegSet &CurLiveSet, unsigned Reg);
   int64_t getBranchTargetMBBNumber(const MachineInstr &MI);
@@ -224,6 +231,11 @@ private:
   bool isEffectiveAddrValue(Value *Val);
 
   std::vector<JumpTableInfo> JTList;
+
+  // Check if there exists a dynamically relocated variable with the given name
+  inline bool isDynRelocatedGlobalVariable(std::string Name) {
+    return DynRelocatedGlobalVariables.find(Name) != DynRelocatedGlobalVariables.end();
+  }
 };
 
 } // end namespace mctoll

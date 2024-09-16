@@ -34,6 +34,7 @@
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LegacyPassManager.h"
+#include "llvm/MC/MCInstrDesc.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -2165,10 +2166,6 @@ bool X86MachineInstructionRaiser::raiseBinaryOpMemToRegInstr(
   case X86::PANDrm: {
     assert(DestValue != nullptr &&
            "Encountered instruction with undefined register");
-    BinOpInst = BinaryOperator::CreateAnd(DestValue, LoadValue);
-  } break;
-  case X86::PANDNrm: {
-    DestValue = BinaryOperator::CreateNot(DestValue, "", RaisedBB);
     BinOpInst = BinaryOperator::CreateAnd(DestValue, LoadValue);
   } break;
   case X86::PANDNrm: {
@@ -5393,14 +5390,15 @@ bool X86MachineInstructionRaiser::raiseCallMachineInstr(
       uint8_t PositionMask = 0;
 
       const MachineBasicBlock *CurMBB = MI.getParent();
+      bool HasCallInst = false;
       unsigned int ArgNo = 1;
       // Find if CurMBB has call between block entry and MI
 
       for (auto ArgReg : GPR64ArgRegs64Bit) {
         BitVector BlocksVisited(MF.getNumBlockIDs(), false);
-        if (hasReachingRegister(CurMBB, &MI, ArgReg, BlocksVisited)) {
+        if (getPhysRegDefiningInstInBlock(ArgReg, &MI, CurMBB, MCID::Call, HasCallInst) != nullptr)
           PositionMask |= (1 << ArgNo);
-        elif (!HasCallInst) {
+        else if (!HasCallInst) {
           // Look to see if the argument register has a reaching definition in
           // the predecessors of CurMBB.
           unsigned int ReachDefPredEdgeCount = 0;

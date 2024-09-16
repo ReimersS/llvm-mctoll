@@ -12,10 +12,10 @@
 
 #include "llvm-mctoll.h"
 #include "EmitRaisedOutputPass.h"
-#include "IncludedFileInfo.h"
-#include "MCInstOrData.h"
-#include "MachineFunctionRaiser.h"
-#include "ModuleRaiser.h"
+#include "Raiser/IncludedFileInfo.h"
+#include "Raiser/MCInstOrData.h"
+#include "Raiser/MachineFunctionRaiser.h"
+#include "Raiser/ModuleRaiser.h"
 #include "FencesPass.h"
 #include "PeepholeOptimizationPass.h"
 #include "PointerArgumentPromotionPass.h"
@@ -165,6 +165,9 @@ std::string mctoll::SysRoot;
 std::string mctoll::ArchName;
 static std::string FilterConfigFileName;
 std::vector<std::string> mctoll::FilterSections;
+std::string mctoll::DisSymName;
+bool mctoll::NonVerbose;
+bool mctoll::PrintImmHex;
 
 static uint64_t StartAddress;
 static bool HasStartAddressFlag;
@@ -175,8 +178,8 @@ static bool HasStopAddressFlag;
 std::vector<std::string> mctoll::IncludeFileNames;
 std::string mctoll::CompilationDBDir;
 
-static bool PrintImmHex;
-
+static bool DisableOptimizationsGlobal;
+static bool OptimizeFencesGlobal;
 
 namespace {
 static ManagedStatic<std::vector<std::string>> RunPassNames;
@@ -703,24 +706,6 @@ static void initializeAllModuleRaisers() {
 #define MODULE_RAISER(TargetName) register##TargetName##ModuleRaiser();
 #include "Raisers.def"
 }
-
-ModuleRaiser *getModuleRaiser(const TargetMachine *tm) {
-  ModuleRaiser *mr = nullptr;
-  auto arch = tm->getTargetTriple().getArch();
-  for (auto m : ModuleRaiserRegistry)
-    if (m->getArchType() == arch) {
-      mr = m;
-      break;
-    }
-  assert(nullptr != mr && "This arch has not yet supported for raising!\n");
-  return mr;
-}
-
-} // namespace RaiserContext
-
-
-bool DisableOptimizationsGlobal = false;
-bool OptimizeFencesGlobal = false;
 
 static void disassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
   if (StartAddress > StopAddress)
@@ -1528,6 +1513,12 @@ static void parseOptions(const llvm::opt::InputArgList &InputArgs) {
   SysRoot = InputArgs.getLastArgValue(OPT_sysyroot_EQ).str();
   OutputFilename = InputArgs.getLastArgValue(OPT_outfile_EQ).str();
 
+  DisableOptimizationsGlobal = InputArgs.hasArg(OPT_disable_optimizations);
+  PrintImmHex = InputArgs.hasArg(OPT_print_imm_hex);
+  DisSymName = InputArgs.getLastArgValue(OPT_disassemble_symbol_name_EQ).str();
+  NonVerbose = InputArgs.hasArg(OPT_non_verbose);
+
+
   InputFileNames = InputArgs.getAllArgValues(OPT_INPUT);
   if (InputFileNames.empty())
     reportCmdLineError("no input file");
@@ -1597,13 +1588,11 @@ int main(int argc, char **argv) {
       "\n*** along with a back trace and a reproducer, if possible.\n");
 
   errs() << "optimize-fences: ";
-  if (OptimizeFences) {
+  if (OptimizeFencesGlobal) {
     errs() << "true\n";
   } else {
     errs() << "false\n";
   }
-  DisableOptimizationsGlobal = DisableOptimizations;
-  OptimizeFencesGlobal = OptimizeFences;
 
   // Create a string vector of include files to parse for external definitions
   std::vector<string> IncludeFNames;

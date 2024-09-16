@@ -101,3 +101,18 @@ def target_EQ : Separate<["-"], "target">,
   HelpText<"Target triple to disassemble for, "
             "see --version for available targets">,
   Flags<[HelpHidden]>;
+
+def disable_optimizations : Flag<["--"], "disable-optimizations">,
+  HelpText<"Disable code optimization passes during the raising process">;
+
+def optimize_fences : Flag<["--"], "optimize-fences">,
+  HelpText<"Enable the experimental fence optimizations">;
+
+def print_imm_hex : Flag<["--"], "print-imm-hex">,
+  HelpText<"Use hex format for immediate values">;
+
+def non_verbose : Flag<["--"], "non-verbose">,
+  HelpText<"Print the info for Mach-O objects in ">;
+
+def disassemble_symbol_name_EQ : Joined<["--"], "dis-symname=">,
+  HelpText<"disassemble just this symbol's instructions (requires -macho)">;

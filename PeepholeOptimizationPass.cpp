@@ -86,10 +86,11 @@ bool PeepholeOptimizationPass::runOnFunction(Function &F) {
 
                 IRBuilder<> Builder(&I);
 
-                auto *BytePtrTy = PointerType::getUnqual(IntegerType::get(F.getContext(),8));
+                auto *ElementTy = IntegerType::get(F.getContext(), 8);
+                auto *BytePtrTy = PointerType::getUnqual(ElementTy);
                 auto *BytePtr = Builder.CreateIntToPtr(BinOp->getOperand(0), BytePtrTy);
 
-                auto *GEP = Builder.CreateGEP(BytePtr, GEPIdx);
+                auto *GEP = Builder.CreateGEP(ElementTy, BytePtr, GEPIdx);
 
                 auto *FinalPtr = Builder.CreatePointerCast(GEP, I2P->getType());
                 I2P->replaceAllUsesWith(FinalPtr);

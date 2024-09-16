@@ -164,7 +164,7 @@ static bool ReplacePtrArguments(Function *F) {
         IRBuilder<> Builder(CB);
 
         std::vector<Value*> Args;
-        for (unsigned i = 0; i<CB->getNumArgOperands(); i++) {
+        for (unsigned i = 0; i<CB->getNumOperands(); i++) {
           if (i<OldArgsList.size() && ArgPtrTy.find(OldArgsList[i])!=ArgPtrTy.end()) {
             if (auto *P2I = dyn_cast<PtrToIntInst>(CB->getArgOperand(i))) {
               Args.push_back(  Builder.CreatePointerCast(P2I->getOperand(0), ArgPtrTy[OldArgsList[i]]) );

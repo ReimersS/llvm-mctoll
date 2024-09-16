@@ -65,14 +65,11 @@ using namespace object;
 extern std::string MCPU;
 extern std::vector<std::string> MAttrs;
 
-static std::string DisSymName;
-static bool PrintImmHex;
 static bool UseDbg;
 static std::string DSYMFile;
 static bool FullLeadingAddr;
 static bool NoLeadingHeaders;
 // static bool ArchiveMemberOffsets;
-static bool NonVerbose;
 static bool NoSymbolicOperands;
 static std::vector<std::string> ArchFlags;
 
